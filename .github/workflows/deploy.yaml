@@ -67,4 +67,4 @@ jobs:
 
           git commit -m "Update image to ${{ github.sha }}" || echo "No changes to commit"
 
-        git push
+          git push
