@@ -1,0 +1,70 @@
+name: CI-CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "manifest/**"   # 🔥 prevents infinite loop
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write   # ✅ REQUIRED for git push
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: actions
+  ACCOUNT_ID: 279112112893
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 🔹 Checkout SAME repo
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      # 🔐 OIDC Login
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::279112112893:role/GithubActionsRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 🔑 Login to ECR
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 🐳 Build Image
+      - name: Build Docker Image
+        run: |
+          docker build -t $ECR_REPO:${{ github.sha }} .
+
+      # 🏷 Tag Image
+      - name: Tag Image
+        run: |
+          docker tag $ECR_REPO:${{ github.sha }} \
+          $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:${{ github.sha }}
+
+      # 🚀 Push Image
+      - name: Push Image
+        run: |
+          docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:${{ github.sha }}
+
+      # 📦 Update Kubernetes Manifest (same repo)
+      - name: Update Deployment Image
+        run: |
+          sed -i "/name: actions/{n;s|image:.*|image: $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:${{ github.sha }}|}" manifest/deployment.yaml
+
+      # 🔧 Commit & Push changes
+      - name: Commit and Push Changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git add manifest/deployment.yaml
+
+          git commit -m "Update image to ${{ github.sha }}" || echo "No changes to commit"
+
+        git push
